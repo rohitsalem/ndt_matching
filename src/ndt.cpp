@@ -365,8 +365,8 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                                     double f = b * c;
                                     hessian(i, j) +=
                                             gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) *
-                                            (-gaussian_d2 * f) + d +
-                                            e;
+                                            ((-gaussian_d2 * f) + d +
+                                            e);
 //                        std::cout << "Hess(i,j)" << hessian(i,j) << std::endl;
                                 }
                             }
