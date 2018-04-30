@@ -16,7 +16,7 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     // Initializing values for the gaussians
     double  gaussian_c1, gaussian_c2, gaussian_d3;
     outlier_ratio_ = 0.55;
-    resolution_ = 10;
+    resolution_ = 5.0;
     gaussian_c1 = 10*(1-outlier_ratio_);
     gaussian_c2 = outlier_ratio_/pow(resolution_,3);
     gaussian_d3 = -log (gaussian_c2);
@@ -39,17 +39,11 @@ NDT::~NDT()
 
 }
 
-//void NDT::readmap()
-//{
-//
-//}
 
-void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
+void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& v_grid)
 {
-//    std::cout<< "inside voxelize" << "\n";
-//    double  x_min, x_max, y_min, y_max, z_min, z_max;
-    double  x, y, z ;
 
+    double  x, y, z ;
 
     // initialize first point to min and max values
     x_min = x_max = cloud.points.at(0).x;
@@ -98,16 +92,13 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
     voxel_num_z = floor((z_max-z_min)/resolution_);
 
     //   Creating a voxel grid
-//    std::cout << " creating voxel grid"<<std::endl;
-    vgrid.voxel_numx = voxel_num_x +1;
-    vgrid.voxel_numy = voxel_num_y +1;
-    vgrid.voxel_numz = voxel_num_z +1;
+    v_grid.voxel_numx = voxel_num_x +1;
+    v_grid.voxel_numy = voxel_num_y +1;
+    v_grid.voxel_numz = voxel_num_z +1;
 
-    vgrid.resize(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
+    v_grid.resize(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
 
-    vgrid.reset(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
-
-//    std::cout << " created  voxel grid :"  <<std::endl;
+    v_grid.reset(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
 
     // Mean
     for (size_t i = 0; i < cloud.size(); i++) {
@@ -118,26 +109,28 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
         int idx = floor((x - x_min) / resolution_);
         int idy = floor((y - y_min) / resolution_);
         int idz = floor((z - z_min) / resolution_);
-//        std::cout << idx << " " << idy <<  " " << idz << "\n";
-//        std::cout << voxel_num_x << " " << voxel_num_y <<  " " << voxel_num_z<< "\n";
+
         Eigen::Vector3d point(x, y, z);
 
-        vgrid.grid[idx][idy][idz].mean += point;
-        vgrid.grid[idx][idy][idz].numPoints += 1;
-//        std::cout << vgrid.grid[idx][idy][idz].numPoints << "\n";
-//        std::cout << " inside calculating mean :" <<vgrid.grid[idx][idy][idz].mean  <<std::endl;
-
+        v_grid.grid[idx][idy][idz].mean += point;
+        v_grid.grid[idx][idy][idz].numPoints += 1;
     }
+
+    std::cout << "Voxels on x axis :" << vgrid.voxel_numx << "\n" ;
+    std::cout << "Voxels on y axis :" << vgrid.voxel_numy << "\n" ;
+    std::cout << "Voxels on z axis :" << vgrid.voxel_numz << "\n" ;
+    std::cout << "Total Voxels : " << vgrid.voxel_numx*vgrid.voxel_numy*vgrid.voxel_numz << "\n" ;
 
     // computing mean in each voxel
     for (size_t i=0; i<= voxel_num_x; i++) {
 //        std::cout << "x mean" << "\n";
         for(size_t j =0; j<= voxel_num_y; j++ ) {
             for (size_t k = 0; k<= voxel_num_z; k++) {
-                if (vgrid.grid[i][j][k].numPoints != 0)
+                if (v_grid.grid[i][j][k].numPoints != 0)
 //                    std::cout << " inside calculating mean for each voxel :"  <<std::endl;
+//                    std::cout << "number of points: " << v_grid.grid[i][j][k].numPoints << "\n";
 
-                vgrid.grid[i][j][k].mean /= vgrid.grid[i][j][k].numPoints;
+                v_grid.grid[i][j][k].mean /= v_grid.grid[i][j][k].numPoints;
             }
         }
     }
@@ -162,27 +155,29 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
         Eigen::Vector3d point(x, y, z);
         Eigen::Vector3d v;
 
-        v = point - vgrid.grid[idx][idy][idz].mean;
-        vgrid.grid[idx][idy][idz].covariance += v*v.transpose();
+        v = point - v_grid.grid[idx][idy][idz].mean;
+        v_grid.grid[idx][idy][idz].covariance += v*v.transpose();
 
     }
 
+    int voxels_with_covariance = 0;
     // Computing covariance in each voxel
     for (size_t i=0; i< voxel_num_x; i++) {
         for (size_t j = 0; j <  voxel_num_y; j++) {
             for (size_t k = 0; k <voxel_num_z; k++) {
-//                std::cout << vgrid.grid[i][j][k].numPoints << "\n";
-                if (vgrid.grid[i][j][k].numPoints > 6)
-
-                vgrid.grid[i][j][k].covariance /= (vgrid.grid[i][j][k].numPoints-1);
+//                std::cout << v_grid.grid[i][j][k].numPoints << "\n";
+                if (v_grid.grid[i][j][k].numPoints > 6)
+                {
+                 voxels_with_covariance+=1;
+                v_grid.grid[i][j][k].covariance /= (v_grid.grid[i][j][k].numPoints-1);
 
                 //Normalizing covariance to remove singularities
-                eigenslover.compute(vgrid.grid[i][j][k].covariance);
+                eigenslover.compute(v_grid.grid[i][j][k].covariance);
                 eigen_val = eigenslover.eigenvalues().asDiagonal();
                 eigenvecs = eigenslover.eigenvectors();
                 if (eigen_val(0,0)<0 || eigen_val(1,1) <0 || eigen_val (2,2) <=0)
                 {
-                    vgrid.grid[i][j][k].numPoints =-1;
+                    v_grid.grid[i][j][k].numPoints =-1;
                     continue;
                 }
                 if (eigen_val(0,0) < min_covar_eigenvalue)
@@ -192,19 +187,22 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
                     {
                         eigen_val(1,1)  = min_covar_eigenvalue;
                     }
-                    vgrid.grid[i][j][k].covariance = eigenvecs*eigen_val*eigenvecs.inverse();
+                    v_grid.grid[i][j][k].covariance = eigenvecs*eigen_val*eigenvecs.inverse();
 //                    std::cout << "Inside normalizing step " << "\n";
-//                    std::cout << vgrid.grid[i][j][k].covariance << "\n";
-                    icov = vgrid.grid[i][j][k].covariance.inverse();
+//                    std::cout << v_grid.grid[i][j][k].covariance << "\n";
+                    icov = v_grid.grid[i][j][k].covariance.inverse();
                     if (icov.maxCoeff() == std::numeric_limits<float>::infinity()
                             || icov.minCoeff() == -std::numeric_limits<float>::infinity())
                     {
-                        vgrid.grid[i][j][k].numPoints =-1;
+                        v_grid.grid[i][j][k].numPoints =-1;
                     }
+                }
+
                 }
             }
         }
     }
+//    std::cout << "Voxels with covariance :" << voxels_with_covariance << "\n";
 }
 
 
