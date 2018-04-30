@@ -10,6 +10,9 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
 //    mapSub = nh.subscribe("/cloud_pcd", 10, &NDT::mapCallback, this);
     initialPoseSub = nh.subscribe("/initialpose", 10, &NDT::initialPoseCallback, this);
 
+    // Current pose publisher
+    posePub = nh.advertise<geometry_msgs::Pose>("/ndt/pose", 100);
+
     // Initializing values for the gaussians
     double  gaussian_c1, gaussian_c2, gaussian_d3;
     outlier_ratio_ = 0.55;
@@ -269,8 +272,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 //    pt_hessian_.setZero();
 //    score = 0;
 
-//    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
-        while (n_iterations < 3) {
+    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 10 )  {
             grad.setZero();
             hessian.setZero();
             pt_gradient_.setZero();
@@ -288,7 +290,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 
             n_iterations += 1;
             std::cout << "computing score" << std::endl;
-
+            bool compute_gradient = false;
             for (size_t i = 0; i < transCloud->size(); i++) {
                 // Find the cell in which the point is lying
                 x = transCloud->points.at(i).x;
@@ -312,6 +314,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 //            std::cout << "score:: " << score << "\n";
                     // Computing PDFs only for those voxels with more than 5 points
                     if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                        compute_gradient = true;
                         double a = diff.transpose() * covarinv * diff;
                         std::cout << "Covariance : " << covar;
                         std::cout << "Covariance inverse     : " << covarinv;
@@ -323,82 +326,86 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             }
 
             // Compute gradient
+            if (compute_gradient == true) {
+                std::cout << "Computing gradient" << std::endl;
+                for (size_t i = 0; i < transCloud->size(); i++) {
 
-            std::cout << "Computing gradient" << std::endl;
-            for (size_t i = 0; i < transCloud->size(); i++) {
+                    x = transCloud->points.at(i).x;
+                    y = transCloud->points.at(i).y;
+                    z = transCloud->points.at(i).z;
 
-                x = transCloud->points.at(i).x;
-                y = transCloud->points.at(i).y;
-                z = transCloud->points.at(i).z;
+                    int idx = floor((x - x_min) / resolution_);
+                    int idy = floor((y - y_min) / resolution_);
+                    int idz = floor((z - z_min) / resolution_);
+                    if ((idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) &&
+                        (idz >= 0) && (idz < vgrid.voxel_numz)) {
+                        Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
+                        Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
+                        Eigen::Matrix3d covarinv = covar.inverse();
+                        Eigen::Vector3d Xpt(x, y, z);
 
-                int idx = floor((x - x_min) / resolution_);
-                int idy = floor((y - y_min) / resolution_);
-                int idz = floor((z - z_min) / resolution_);
-                if ( (idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) &&(idz >= 0) && (idz < vgrid.voxel_numz)) {
-                Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
-                Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
-                Eigen::Matrix3d covarinv = covar.inverse();
-                Eigen::Vector3d Xpt(x, y, z);
+                        // Subtracting mean from the point
+                        Eigen::Vector3d X = Xpt - mean;
 
-                // Subtracting mean from the point
-                Eigen::Vector3d X = Xpt - mean;
+                        computeDerivative(CurrentPoseRPY, transCloud->points.at(i), pt_gradient_);
+                        computeHessian(CurrentPoseRPY, transCloud->points.at(i), pt_hessian_);
 
-                computeDerivative(CurrentPoseRPY, transCloud->points.at(i), pt_gradient_);
-                computeHessian(CurrentPoseRPY, transCloud->points.at(i), pt_hessian_);
-
-                // update gradient
-                if (vgrid.grid[idx][idy][idz].numPoints > 6) {
-                    for (size_t i = 0; i < 6; i++) {
-                        double a = X.transpose() * covarinv * X;
+                        // update gradient
+                        if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                            for (size_t i = 0; i < 6; i++) {
+                                double a = X.transpose() * covarinv * X;
 //                    std::cout << "a: " << a << std::endl;
-                        double b = X.transpose() * covarinv * pt_gradient_.col(i);
+                                double b = X.transpose() * covarinv * pt_gradient_.col(i);
 //                    std::cout << "b: " << b << std::endl;
-                        grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
+                                grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
 //                    std::cout << "grad (i): " << grad(i) << std::endl;
-                        // update hessian
-                        for (size_t j = 0; j < 6; j++) {
-                            double c = X.transpose() * covarinv * pt_gradient_.col(j);
-                            double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
-                            double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
-                            double f = b * c;
-                            hessian(i, j) +=
-                                    gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d +
-                                    e;
+                                // update hessian
+                                for (size_t j = 0; j < 6; j++) {
+                                    double c = X.transpose() * covarinv * pt_gradient_.col(j);
+                                    double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
+                                    double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
+                                    double f = b * c;
+                                    hessian(i, j) +=
+                                            gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) *
+                                            (-gaussian_d2 * f) + d +
+                                            e;
 //                        std::cout << "Hess(i,j)" << hessian(i,j) << std::endl;
+                                }
+                            }
                         }
                     }
-                }
+
                 }
 
+
+                std::cout << "gradient : " << grad << std::endl;
+                std::cout << "Hessian : " << hessian << std::endl;
+
+                // Solve for detlaP = - Hinv*g
+                deltaP = -hessian.inverse() * grad;
+
+                std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
+
+                std::cout << "deltaP" << deltaP << std::endl;
+
+                CurrentPoseRPY = CurrentPoseRPY + deltaP;
+
+                tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
+                currentPose.position.x = CurrentPoseRPY(0);
+                currentPose.position.y = CurrentPoseRPY(1);
+                currentPose.position.z = CurrentPoseRPY(2);
+                currentPose.orientation.w = q.w();
+                currentPose.orientation.x = q.x();
+                currentPose.orientation.y = q.y();
+                currentPose.orientation.z = q.z();
+                std::cout << "current Pose :" << std::endl;
+                std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+                std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
+                          << deltaP(5) << "\n";
             }
 
-            std::cout << "gradient : " << grad << std::endl;
-            std::cout << "Hessian : " << hessian << std::endl;
-
-            // Solve for detlaP = - Hinv*g
-            deltaP = -hessian.inverse() * grad;
-
-            std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
-
-            std::cout << "deltaP" << deltaP << std::endl;
-
-            CurrentPoseRPY = CurrentPoseRPY + deltaP;
-
-            tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
-            currentPose.position.x = CurrentPoseRPY(0);
-            currentPose.position.y = CurrentPoseRPY(1);
-            currentPose.position.z = CurrentPoseRPY(2);
-            currentPose.orientation.w = q.w();
-            currentPose.orientation.x = q.x();
-            currentPose.orientation.y = q.y();
-            currentPose.orientation.z = q.z();
-            std::cout << "current Pose :" << std::endl;
-            std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
-            std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
-                      << deltaP(5) << "\n";
-
-
         }
+        posePub.publish(currentPose);
     }
 }
 

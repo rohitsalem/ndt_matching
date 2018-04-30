@@ -87,6 +87,7 @@ public: void computeTransform(const Cloud::Ptr &map_cloud, const Cloud::Ptr &sca
 public: void voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid);
 
 public: bool initPose_set;
+private: ros::Publisher posePub;
 private: ros::Subscriber mapSub;
 private: ros::Subscriber scanSub;
 private: ros::Subscriber initialPoseSub;
