@@ -32,7 +32,6 @@ NDT::~NDT()
 
 }
 
-
 void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 {
 //    std::cout<< "inside voxelize" << "\n";
@@ -181,8 +180,8 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
                         eigen_val(1,1)  = min_covar_eigenvalue;
                     }
                     vgrid.grid[i][j][k].covariance = eigenvecs*eigen_val*eigenvecs.inverse();
-                    std::cout << "Inside normalizing step " << "\n";
-                    std::cout << vgrid.grid[i][j][k].covariance << "\n";
+//                    std::cout << "Inside normalizing step " << "\n";
+//                    std::cout << vgrid.grid[i][j][k].covariance << "\n";
                     icov = vgrid.grid[i][j][k].covariance.inverse();
                     if (icov.maxCoeff() == std::numeric_limits<float>::infinity()
                             || icov.minCoeff() == -std::numeric_limits<float>::infinity())
@@ -243,6 +242,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         // For each point in the scan
         // tranfrom the point cloud T(p,x)
         Cloud::Ptr transCloud(new Cloud());
+
 //        Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y, currentPose.position.z);
 //        Eigen::Quaternion<double> rotation(currentPose.orientation.w, currentPose.orientation.x,
 //                                           currentPose.orientation.y, currentPose.orientation.z);
@@ -298,8 +298,10 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 int idy = floor((y - y_min) / resolution_);
                 int idz = floor((z - z_min) / resolution_);
 
-                if (idx < vgrid.voxel_numx && idy < vgrid.voxel_numy && idz < vgrid.voxel_numz) {
-
+                if ( (idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) &&(idz >= 0) && (idz < vgrid.voxel_numz)) {
+//                    std::cout << "inside computing voxel loop" << "\n";
+//                    std:: cout << "idx: " << idx << " " << "idy: " << idy << " " << "idz: "<< idz << "\n";
+//                    std:: cout << "maxx: " << vgrid.voxel_numx << " " << "maxy:" << vgrid.voxel_numy  << " " << "maxz: " <<vgrid.voxel_numz << "\n";
                     Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
                     Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
                     Eigen::Matrix3d covarinv = covar.inverse();
@@ -311,6 +313,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     // Computing PDFs only for those voxels with more than 5 points
                     if (vgrid.grid[idx][idy][idz].numPoints > 6) {
                         double a = diff.transpose() * covarinv * diff;
+                        std::cout << "Covariance : " << covar;
                         std::cout << "Covariance inverse     : " << covarinv;
                         std::cout << "a" << a << "\n";
                         score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
@@ -331,7 +334,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 int idx = floor((x - x_min) / resolution_);
                 int idy = floor((y - y_min) / resolution_);
                 int idz = floor((z - z_min) / resolution_);
-
+                if ( (idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) &&(idz >= 0) && (idz < vgrid.voxel_numz)) {
                 Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
                 Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
                 Eigen::Matrix3d covarinv = covar.inverse();
@@ -361,8 +364,10 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                             hessian(i, j) +=
                                     gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d +
                                     e;
+//                        std::cout << "Hess(i,j)" << hessian(i,j) << std::endl;
                         }
                     }
+                }
                 }
 
             }
@@ -507,7 +512,6 @@ void NDT::computeHessian(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointX
     pt_hessian_.block<3, 1>(12, 5) = e;
     pt_hessian_.block<3, 1>(15, 5) = f;
 
-
 }
 
 
@@ -520,8 +524,8 @@ int main (int argc, char **argv)
     std::string mapfile = "/home/rsalem/apex/workspace/src/ndt/data/map.pcd";
     obj.mapfile = mapfile;
     //    pcl::PCDReader reader;
-//    reader.read
-//    nh.param<std::string>("map_file", mapfile, "map.pcd");
+    //    reader.read
+    //    nh.param<std::string>("map_file", mapfile, "map.pcd");
 
     while(ros::ok()){
         ros::spin();
