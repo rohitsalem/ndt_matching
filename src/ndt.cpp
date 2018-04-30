@@ -18,22 +18,13 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     gaussian_c2 = outlier_ratio_/pow(resolution_,3);
     gaussian_d3 = -log (gaussian_c2);
     gaussian_d1 = -log (gaussian_c1+gaussian_c2) - gaussian_d3;
-//    std::cout << (-log(gaussian_c1*exp(-0.5)+gaussian_c2)-gaussian_d3) << "\n";
-
     gaussian_d2 = -2*log((-log(gaussian_c1*exp(-0.5)+gaussian_c2)-gaussian_d3)/gaussian_d1);
-
-//    std::cout << "c1 " << gaussian_c1 <<  "\n" ;
-//    std::cout << "c2 " << gaussian_c2 <<  "\n" ;
-//    std::cout << "d1 " << gaussian_d1 <<  "\n" ;
-//    std::cout << "d2 " << gaussian_d2 <<  "\n" ;
-//    std::cout << "d3 " << gaussian_d3 <<  "\n" ;
 
     pcl::PCDReader reader;
 
     reader.read("/home/rsalem/apex/workspace/src/ndt/data/map.pcd",scanCloud);
     ROS_INFO("Got point cloud with %ld points", scanCloud.size());
-    CurrentPoseRPY.setOnes();
-//    std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+    initPose_set = false;
 }
 
 NDT::~NDT()
@@ -162,7 +153,6 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
         v = point - vgrid.grid[idx][idy][idz].mean;
         vgrid.grid[idx][idy][idz].covariance += v*v.transpose();
 
-
     }
 
     // Computing covariance in each voxel
@@ -221,8 +211,8 @@ void NDT::initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::Co
             input->pose.pose.orientation.w);
     tf::Matrix3x3(q).getRPY(roll, pitch, yaw);
     CurrentPoseRPY << input->pose.pose.position.x , input->pose.pose.position.y ,input->pose.pose.position.z , roll ,pitch , yaw;
-    // Needs to be changed here
-//    CurrentPoseRPY << initPose.position.x, initPose.position.y, initPose.position.z, initPose.orientation.
+    initPose_set = true;
+    std::cout << "initial Pose is set " << "\n";
 }
 
 void NDT::mapCallback (const sensor_msgs::PointCloud2ConstPtr& input)
@@ -236,163 +226,175 @@ void NDT::mapCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 
 void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 {
-    Cloud::Ptr cloud(new Cloud());
-    scanCloud = *cloud;
-    pcl::fromROSMsg(*input, scanCloud);
-    ROS_INFO("Got point cloud with %ld points", scanCloud.size());
+    // Run only if the initial pose is set
+    if (initPose_set == true) {
 
-    // store voxel grid
-    VoxelGrid vgrid;
-    NDT::voxelize_find_boundaries(scanCloud, vgrid);
+        Cloud::Ptr cloud(new Cloud());
+        scanCloud = *cloud;
+        pcl::fromROSMsg(*input, scanCloud);
+        ROS_INFO("Got point cloud with %ld points", scanCloud.size());
 
-    double  x, y, z;
+        // store voxel grid
+        VoxelGrid vgrid;
+        NDT::voxelize_find_boundaries(scanCloud, vgrid);
 
-    // For each point in the scan
-    // tranfrom the point cloud T(p,x)
-    Cloud::Ptr transCloud(new Cloud());
-    Eigen::Matrix<double, 3,1> position(currentPose.position.x,currentPose.position.y,currentPose.position.z);
-    Eigen::Quaternion<double> rotation(currentPose.orientation.w,currentPose.orientation.x,currentPose.orientation.y,currentPose.orientation.z);
+        double x, y, z;
 
-    Eigen::Matrix<double, 6, 1> grad;
-    Eigen::Matrix<double, 6, 6> hessian;
-    Eigen::Matrix<double, 6, 1> deltaP;
+        // For each point in the scan
+        // tranfrom the point cloud T(p,x)
+        Cloud::Ptr transCloud(new Cloud());
+//        Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y, currentPose.position.z);
+//        Eigen::Quaternion<double> rotation(currentPose.orientation.w, currentPose.orientation.x,
+//                                           currentPose.orientation.y, currentPose.orientation.z);
 
-    std::cout<< "transforming Pointcloud" << std::endl;
-    pcl::transformPointCloud (scanCloud, *transCloud, position, rotation);
-    std::cout << "transforming Pointcloud done...." << "\n";
-    deltaP << 1,1,1,1,1,1;
-    grad.setZero();
-    hessian.setZero();
+        Eigen::Matrix<double, 6, 1> grad;
+        Eigen::Matrix<double, 6, 6> hessian;
+        Eigen::Matrix<double, 6, 1> deltaP;
 
-    // find the cell in which the point is lying
-    int n_iterations = 0;
+//        std::cout << "transforming Pointcloud" << std::endl;
+//        pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
+//        std::cout << "transforming Pointcloud done...." << "\n";
+        deltaP << 1, 1, 1, 1, 1, 1;
+//    grad.setZero();
+//    hessian.setZero();
 
-    Eigen::Matrix<double, 3, 6> pt_gradient_;
-    Eigen::Matrix<double, 18, 6> pt_hessian_;
+        // find the cell in which the point is lying
+        int n_iterations = 0;
 
-    pt_gradient_.setZero();
-    pt_gradient_.block<3, 3>(0, 0).setIdentity ();
-    pt_hessian_.setZero();
-    score = 0;
+        Eigen::Matrix<double, 3, 6> pt_gradient_;
+        Eigen::Matrix<double, 18, 6> pt_hessian_;
+
+//    pt_gradient_.setZero();
+//    pt_gradient_.block<3, 3>(0, 0).setIdentity ();
+//    pt_hessian_.setZero();
+//    score = 0;
 
 //    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
-    while(n_iterations < 3){
+        while (n_iterations < 3) {
+            grad.setZero();
+            hessian.setZero();
+            pt_gradient_.setZero();
+            pt_gradient_.block<3, 3>(0, 0).setIdentity();
+            pt_hessian_.setZero();
+            score = 0;
 
+            Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y,
+                                                 currentPose.position.z);
+            Eigen::Quaternion<double> rotation(currentPose.orientation.w, currentPose.orientation.x,
+                                               currentPose.orientation.y, currentPose.orientation.z);
 
-        std::cout << "#################Iteration Number########### " << n_iterations << "\n";
+            pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
+            std::cout << "#################Iteration Number########### " << n_iterations << "\n";
 
-        n_iterations += 1;
-        std::cout << "computing score" << std::endl;
-        for (size_t i = 0; i < transCloud->size(); i++) {
-            // Find the cell in which the point is lying
-            x = transCloud->points.at(i).x;
-            y = transCloud->points.at(i).y;
-            z = transCloud->points.at(i).z;
-            int idx = floor((x - x_min) / resolution_);
-            int idy = floor((y - y_min) / resolution_);
-            int idz = floor((z - z_min) / resolution_);
+            n_iterations += 1;
+            std::cout << "computing score" << std::endl;
 
-            if (idx < vgrid.voxel_numx && idy < vgrid.voxel_numy && idz <vgrid.voxel_numz) {
+            for (size_t i = 0; i < transCloud->size(); i++) {
+                // Find the cell in which the point is lying
+                x = transCloud->points.at(i).x;
+                y = transCloud->points.at(i).y;
+                z = transCloud->points.at(i).z;
+                int idx = floor((x - x_min) / resolution_);
+                int idy = floor((y - y_min) / resolution_);
+                int idz = floor((z - z_min) / resolution_);
 
-                Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
-                Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
-                Eigen::Matrix3d covarinv = covar.inverse();
-                Eigen::Vector3d Xpt(x, y, z); //Store the point
-                Eigen::Vector3d diff = Xpt - mean;
+                if (idx < vgrid.voxel_numx && idy < vgrid.voxel_numy && idz < vgrid.voxel_numz) {
+
+                    Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
+                    Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
+                    Eigen::Matrix3d covarinv = covar.inverse();
+                    Eigen::Vector3d Xpt(x, y, z); //Store the point
+                    Eigen::Vector3d diff = Xpt - mean;
 
 //            std::cout << covar << "\n";
 //            std::cout << "score:: " << score << "\n";
-                // Computing PDFs only for those voxels with more than 5 points
-                if (vgrid.grid[idx][idy][idz].numPoints > 6) {
-                    double a = diff.transpose() * covarinv * diff;
-                    std::cout << "Covariance inverse     : " << covarinv;
-                    std::cout << "a" << a << "\n";
-                    score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
-                    std::cout << "score: " << score << "\n";
-                }
-//
-//  std::cout << "score:: " << score << "\n";
-            }
-        }
-
-        // Compute gradient
-
-        std::cout << "Computing gradient" << std::endl;
-        for (size_t i = 0; i < transCloud->size(); i++) {
-
-            x = transCloud->points.at(i).x;
-            y = transCloud->points.at(i).y;
-            z = transCloud->points.at(i).z;
-
-            int idx = floor((x - x_min) / resolution_);
-            int idy = floor((y - y_min) / resolution_);
-            int idz = floor((z - z_min) / resolution_);
-
-            Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
-            Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
-            Eigen::Matrix3d covarinv = covar.inverse();
-            Eigen::Vector3d Xpt(x, y, z);
-
-            // Subtracting mean from the point
-            Eigen::Vector3d X = Xpt - mean;
-
-            computeDerivative(CurrentPoseRPY, transCloud->points.at(i), pt_gradient_);
-            computeHessian(CurrentPoseRPY, transCloud->points.at(i), pt_hessian_);
-
-            // update gradient
-            if (vgrid.grid[idx][idy][idz].numPoints > 6) {
-                for (size_t i = 0; i < 6; i++) {
-                    double a = X.transpose() * covarinv * X;
-//                    std::cout << "a: " << a << std::endl;
-                    double b = X.transpose() * covarinv * pt_gradient_.col(i);
-//                    std::cout << "b: " << b << std::endl;
-                    grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
-//                    std::cout << "grad (i): " << grad(i) << std::endl;
-                    // update hessian
-                    for (size_t j = 0; j < 6; j++) {
-                        double c = X.transpose() * covarinv * pt_gradient_.col(j);
-                        double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
-                        double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
-                        double f = b * c;
-                        hessian(i, j) +=
-                                gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d + e;
+                    // Computing PDFs only for those voxels with more than 5 points
+                    if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                        double a = diff.transpose() * covarinv * diff;
+                        std::cout << "Covariance inverse     : " << covarinv;
+                        std::cout << "a" << a << "\n";
+                        score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
+                        std::cout << "score: " << score << "\n";
                     }
                 }
             }
 
+            // Compute gradient
+
+            std::cout << "Computing gradient" << std::endl;
+            for (size_t i = 0; i < transCloud->size(); i++) {
+
+                x = transCloud->points.at(i).x;
+                y = transCloud->points.at(i).y;
+                z = transCloud->points.at(i).z;
+
+                int idx = floor((x - x_min) / resolution_);
+                int idy = floor((y - y_min) / resolution_);
+                int idz = floor((z - z_min) / resolution_);
+
+                Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
+                Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
+                Eigen::Matrix3d covarinv = covar.inverse();
+                Eigen::Vector3d Xpt(x, y, z);
+
+                // Subtracting mean from the point
+                Eigen::Vector3d X = Xpt - mean;
+
+                computeDerivative(CurrentPoseRPY, transCloud->points.at(i), pt_gradient_);
+                computeHessian(CurrentPoseRPY, transCloud->points.at(i), pt_hessian_);
+
+                // update gradient
+                if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                    for (size_t i = 0; i < 6; i++) {
+                        double a = X.transpose() * covarinv * X;
+//                    std::cout << "a: " << a << std::endl;
+                        double b = X.transpose() * covarinv * pt_gradient_.col(i);
+//                    std::cout << "b: " << b << std::endl;
+                        grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
+//                    std::cout << "grad (i): " << grad(i) << std::endl;
+                        // update hessian
+                        for (size_t j = 0; j < 6; j++) {
+                            double c = X.transpose() * covarinv * pt_gradient_.col(j);
+                            double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
+                            double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
+                            double f = b * c;
+                            hessian(i, j) +=
+                                    gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d +
+                                    e;
+                        }
+                    }
+                }
+
+            }
+
+            std::cout << "gradient : " << grad << std::endl;
+            std::cout << "Hessian : " << hessian << std::endl;
+
+            // Solve for detlaP = - Hinv*g
+            deltaP = -hessian.inverse() * grad;
+
+            std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
+
+            std::cout << "deltaP" << deltaP << std::endl;
+
+            CurrentPoseRPY = CurrentPoseRPY + deltaP;
+
+            tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
+            currentPose.position.x = CurrentPoseRPY(0);
+            currentPose.position.y = CurrentPoseRPY(1);
+            currentPose.position.z = CurrentPoseRPY(2);
+            currentPose.orientation.w = q.w();
+            currentPose.orientation.x = q.x();
+            currentPose.orientation.y = q.y();
+            currentPose.orientation.z = q.z();
+            std::cout << "current Pose :" << std::endl;
+            std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+            std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
+                      << deltaP(5) << "\n";
+
+
         }
-
-        std::cout << "gradient : " << grad << std::endl;
-        std::cout << "Hessian : " << hessian << std::endl;
-
-        // Solve for detlaP = - Hinv*g
-        deltaP = -hessian.inverse() * grad;
-
-        std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
-
-        std::cout << "deltaP" << deltaP << std::endl;
-
-        CurrentPoseRPY = CurrentPoseRPY + deltaP;
-
-        tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
-        currentPose.position.x = CurrentPoseRPY(0);
-        currentPose.position.y = CurrentPoseRPY(1);
-        currentPose.position.z = CurrentPoseRPY(2);
-        currentPose.orientation.w = q.w();
-        currentPose.orientation.x = q.x();
-        currentPose.orientation.y = q.y();
-        currentPose.orientation.z = q.z();
-        std::cout << "current Pose :" << std::endl;
-        std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
-        std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
-                  << deltaP(5) << "\n";
-        Eigen::Matrix<double, 3,1> position(currentPose.position.x,currentPose.position.y,currentPose.position.z);
-        Eigen::Quaternion<double> rotation(currentPose.orientation.w,currentPose.orientation.x,currentPose.orientation.y,currentPose.orientation.z);
-
-        pcl::transformPointCloud (scanCloud, *transCloud, position, rotation);
-
     }
-
 }
 
 
