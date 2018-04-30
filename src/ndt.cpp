@@ -3,6 +3,7 @@
 #include <ros/ros.h>
 #include <tf/transform_datatypes.h>
 #include <pcl/io/pcd_io.h>
+
 NDT::NDT(ros::NodeHandle &n): nh(n)
 {
     scanSub = nh.subscribe("/filtered_points", 10, &NDT::scanCallback, this);
@@ -12,7 +13,7 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     // Initializing values for the gaussians
     double  gaussian_c1, gaussian_c2, gaussian_d3;
     outlier_ratio_ = 0.55;
-    resolution_ = 3;
+    resolution_ = 10;
     gaussian_c1 = 10*(1-outlier_ratio_);
     gaussian_c2 = outlier_ratio_/pow(resolution_,3);
     gaussian_d3 = -log (gaussian_c2);
@@ -22,7 +23,7 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     gaussian_d2 = -2*log((-log(gaussian_c1*exp(-0.5)+gaussian_c2)-gaussian_d3)/gaussian_d1);
 
     std::cout << "c1 " << gaussian_c1 <<  "\n" ;
-    std::cout << "c2 " <<gaussian_c2 <<  "\n" ;
+    std::cout << "c2 " << gaussian_c2 <<  "\n" ;
     std::cout << "d1 " << gaussian_d1 <<  "\n" ;
     std::cout << "d2 " << gaussian_d2 <<  "\n" ;
     std::cout << "d3 " << gaussian_d3 <<  "\n" ;
@@ -31,8 +32,8 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
 
     reader.read("/home/rsalem/apex/workspace/src/ndt/data/map.pcd",scanCloud);
     ROS_INFO("Got point cloud with %ld points", scanCloud.size());
-    CurrentPoseRPY.setZero();
-    std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+    CurrentPoseRPY.setOnes();
+//    std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
 }
 
 NDT::~NDT()
@@ -46,7 +47,6 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 //    std::cout<< "inside voxelize" << "\n";
 //    double  x_min, x_max, y_min, y_max, z_min, z_max;
     double  x, y, z ;
-
 
 
     // initialize first point to min and max values
@@ -117,11 +117,10 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 
         vgrid.grid[idx][idy][idz].mean += point;
         vgrid.grid[idx][idy][idz].numPoints += 1;
-        std::cout << vgrid.grid[idx][idy][idz].numPoints << "\n";
+//        std::cout << vgrid.grid[idx][idy][idz].numPoints << "\n";
 //        std::cout << " inside calculating mean :" <<vgrid.grid[idx][idy][idz].mean  <<std::endl;
 
     }
-//    std::cout << " Hello :"  <<std::endl;
 
     // computing mean in each voxel
     for (size_t i=0; i<= voxel_num_x; i++) {
@@ -168,16 +167,21 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 }
 
 
-void NDT::initialPoseCallback(const geometry_msgs::Pose::ConstPtr& input)
-{   currentPose = *input;
+void NDT::initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& input)
+{   currentPose.position.x = input->pose.pose.position.x;
+    currentPose.position.y = input->pose.pose.position.y;
+    currentPose.position.z = input->pose.pose.position.z;
+    currentPose.orientation.x = input->pose.pose.orientation.x;
+    currentPose.orientation.y = input->pose.pose.orientation.y;
+    currentPose.orientation.z = input->pose.pose.orientation.z;
     double  roll, pitch, yaw;
     tf::Quaternion q(
-            input->orientation.x,
-            input->orientation.y,
-            input->orientation.z,
-            input->orientation.w);
+            input->pose.pose.orientation.x,
+            input->pose.pose.orientation.y,
+            input->pose.pose.orientation.z,
+            input->pose.pose.orientation.w);
     tf::Matrix3x3(q).getRPY(roll, pitch, yaw);
-//    CurrentPoseRPY << input->position.x , input->position.y ,input->position.z , roll ,pitch , yaw;
+    CurrentPoseRPY << input->pose.pose.position.x , input->pose.pose.position.y ,input->pose.pose.position.z , roll ,pitch , yaw;
     // Needs to be changed here
 //    CurrentPoseRPY << initPose.position.x, initPose.position.y, initPose.position.z, initPose.orientation.
 }
@@ -231,10 +235,10 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
     pt_gradient_.setZero();
     pt_hessian_.setZero();
     score = 0;
-//    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
-        std::cout << "inside while :" << n_iterations << "\n";
-        while (n_iterations==0)
-    {
+    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
+        std::cout << "inside while : " << n_iterations << "\n";
+//        while (n_iterations==0)
+//    {
         n_iterations += 1;
         for (size_t i = 0; i < transCloud->size(); i++) {
             // Find the cell in which the point is lying
@@ -252,15 +256,14 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             Eigen::Vector3d Xpt(x, y, z); //Store the point
             Eigen::Vector3d diff = Xpt - mean;
 
-            std::cout << covar << "\n";
-            std::cout << "score:: " << score << "\n";
-
-            double a = diff.transpose() * covarinv * diff;
-
-            std::cout << "a"  << a << "\n" ;
-
-            score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
-
+//            std::cout << covar << "\n";
+//            std::cout << "score:: " << score << "\n";
+            // Computing PDFs only for those voxels with more than 5 points
+            if (vgrid.grid[idx][idy][idz].numPoints> 5) {
+                double a = diff.transpose() * covarinv * diff;
+//                std::cout << "a" << a << "\n";
+                score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
+            }
 //            std::cout << "score:: " << score << "\n";
         }
 
@@ -305,26 +308,32 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 }
             }
 
-            // Solve for detlaP = - Hinv*g
-            deltaP = -hessian.inverse() * grad;
-//            std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
-
-            CurrentPoseRPY = CurrentPoseRPY + deltaP;
-
-            tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
-            currentPose.position.x = CurrentPoseRPY(0);
-            currentPose.position.y = CurrentPoseRPY(1);
-            currentPose.position.z = CurrentPoseRPY(2);
-            currentPose.orientation.w = q.w();
-            currentPose.orientation.x = q.x();
-            currentPose.orientation.y = q.y();
-            currentPose.orientation.z = q.z();
-//            std::cout << "current Pose :" << std::endl;
-//            std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
-//            std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
-//                      << deltaP(5);
-
         }
+
+        std::cout << "Hessian : " << hessian << std::endl;
+
+        std::cout << "gradient : " << grad << std::endl;
+        // Solve for detlaP = - Hinv*g
+        deltaP = -hessian.inverse() * grad;
+
+        std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
+
+        std::cout << "deltaP" << deltaP << std::endl;
+
+        CurrentPoseRPY = CurrentPoseRPY + deltaP;
+
+        tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4), CurrentPoseRPY(5));
+        currentPose.position.x = CurrentPoseRPY(0);
+        currentPose.position.y = CurrentPoseRPY(1);
+        currentPose.position.z = CurrentPoseRPY(2);
+        currentPose.orientation.w = q.w();
+        currentPose.orientation.x = q.x();
+        currentPose.orientation.y = q.y();
+        currentPose.orientation.z = q.z();
+        std::cout << "current Pose :" << std::endl;
+        std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+        std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
+                  << deltaP(5);
     }
 
 }

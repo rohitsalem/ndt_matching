@@ -5,6 +5,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
 // pcl related inputs
 #include <pcl_conversions/pcl_conversions.h>
@@ -57,7 +58,7 @@ public:  ~NDT();
 public: typedef pcl::PointCloud<pcl::PointXYZ> Cloud;
 
     // Subscriber for initial pose guess
-public: void initialPoseCallback(const geometry_msgs::Pose::ConstPtr& input);
+public: void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& input);
 
     // Subscriber for map pointcloud
 public: void mapCallback (const sensor_msgs::PointCloud2ConstPtr& input);
@@ -81,7 +82,7 @@ public: std::string mapfile;
 public: geometry_msgs::Pose initPose;
 public: geometry_msgs::Pose currentPose;
 public: Eigen::Matrix<double, 6, 1> CurrentPoseRPY;
-
+public: void invertMatrix(Eigen::Matrix3d &mat, Eigen::Matrix3d &invmat);
 private:
     double score;
     double  x_min, x_max, y_min, y_max, z_min, z_max;
