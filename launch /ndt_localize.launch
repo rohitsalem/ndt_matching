@@ -1,0 +1,5 @@
+<launch>
+  <node pkg="ndt" type="ndt_node" name="ndt_node" output="screen">
+    <param name="map_file" type="str" value="$(find ndt)/data/map.pcd"/>
+  </node>
+</launch>
