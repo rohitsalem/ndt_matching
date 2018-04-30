@@ -33,6 +33,7 @@ class VoxelGrid
 {public:
     typedef std::vector<std::vector<std::vector<Voxel> > > Grid;
     Grid grid;
+    int voxel_numx, voxel_numy, voxel_numz;
     void resize(const int& nx, const int& ny,const int& nz){
         grid.clear();
         grid.resize(nx);
@@ -44,7 +45,20 @@ class VoxelGrid
             }
 
         }
-
+    }
+    void reset (const int& nx, const int& ny,const int& nz){
+        for (size_t i =0 ; i< nx; i++)
+        {
+            for (size_t j=0; j<ny; j++)
+            {
+                for (size_t k =0; k<nz; k++)
+                {
+                    grid[i][j][k].mean.setZero();
+                    grid[i][j][k].covariance.setOnes();
+                    grid[i][j][k].numPoints = 0;
+                }
+            }
+        }
     }
 };
 
