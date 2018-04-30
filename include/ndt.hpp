@@ -77,7 +77,7 @@ public: void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped:
     // Subscriber for map pointcloud
 public: void mapCallback (const sensor_msgs::PointCloud2ConstPtr& input);
 
-//public: void readMap();
+public: void readMap();
 
 // Subscriber for pointcloud scan data
 public: void scanCallback (const sensor_msgs::PointCloud2ConstPtr& input);
@@ -105,7 +105,7 @@ private:
     double gaussian_d1, gaussian_d2;
 
     double outlier_ratio_, resolution_;
-
+public :   VoxelGrid vgrid;
 //    Eigen::Matrix<double, 3, 6> pt_gradient_;
 //
 //    Eigen::Matrix<double, 18, 6> pt_hessian_;

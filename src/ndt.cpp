@@ -25,8 +25,12 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
 
     pcl::PCDReader reader;
 
-    reader.read("/home/rsalem/apex/workspace/src/ndt/data/map.pcd",scanCloud);
-    ROS_INFO("Got point cloud with %ld points", scanCloud.size());
+    reader.read("/home/rsalem/apex/workspace/src/ndt/data/map.pcd",mapCloud);
+    ROS_INFO("Loaded Map cloud, Got point cloud with %ld points", mapCloud.size());
+    // store voxel grid
+//    VoxelGrid vgrid;
+    NDT::voxelize_find_boundaries(mapCloud, vgrid);
+
     initPose_set = false;
 }
 
@@ -34,6 +38,11 @@ NDT::~NDT()
 {
 
 }
+
+//void NDT::readmap()
+//{
+//
+//}
 
 void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 {
@@ -80,7 +89,6 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
             z_max = z;
         }
     }
-//    std::cout << " x_min of the voxel grid :" << x_min <<std::endl;
 
 
     int voxel_num_x, voxel_num_y, voxel_num_z;
@@ -89,12 +97,14 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
     voxel_num_y = floor((y_max-y_min)/resolution_);
     voxel_num_z = floor((z_max-z_min)/resolution_);
 
-    // Creating a voxel grid
+    //   Creating a voxel grid
 //    std::cout << " creating voxel grid"<<std::endl;
     vgrid.voxel_numx = voxel_num_x +1;
     vgrid.voxel_numy = voxel_num_y +1;
     vgrid.voxel_numz = voxel_num_z +1;
+
     vgrid.resize(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
+
     vgrid.reset(voxel_num_x + 1, voxel_num_y + 1, voxel_num_z + 1);
 
 //    std::cout << " created  voxel grid :"  <<std::endl;
@@ -234,11 +244,11 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         Cloud::Ptr cloud(new Cloud());
         scanCloud = *cloud;
         pcl::fromROSMsg(*input, scanCloud);
-        ROS_INFO("Got point cloud with %ld points", scanCloud.size());
+        ROS_INFO("Got scan point cloud with %ld points", scanCloud.size());
 
-        // store voxel grid
-        VoxelGrid vgrid;
-        NDT::voxelize_find_boundaries(scanCloud, vgrid);
+//        // store voxel grid
+//        VoxelGrid vgrid;
+//        NDT::voxelize_find_boundaries(scanCloud, vgrid);
 
         double x, y, z;
 
@@ -246,20 +256,10 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         // tranfrom the point cloud T(p,x)
         Cloud::Ptr transCloud(new Cloud());
 
-//        Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y, currentPose.position.z);
-//        Eigen::Quaternion<double> rotation(currentPose.orientation.w, currentPose.orientation.x,
-//                                           currentPose.orientation.y, currentPose.orientation.z);
-
         Eigen::Matrix<double, 6, 1> grad;
         Eigen::Matrix<double, 6, 6> hessian;
         Eigen::Matrix<double, 6, 1> deltaP;
-
-//        std::cout << "transforming Pointcloud" << std::endl;
-//        pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
-//        std::cout << "transforming Pointcloud done...." << "\n";
         deltaP << 1, 1, 1, 1, 1, 1;
-//    grad.setZero();
-//    hessian.setZero();
 
         // find the cell in which the point is lying
         int n_iterations = 0;
@@ -267,18 +267,19 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         Eigen::Matrix<double, 3, 6> pt_gradient_;
         Eigen::Matrix<double, 18, 6> pt_hessian_;
 
-//    pt_gradient_.setZero();
-//    pt_gradient_.block<3, 3>(0, 0).setIdentity ();
-//    pt_hessian_.setZero();
-//    score = 0;
+//        Eigen::Matrix<double, 6, 1> comp;
+//        comp << 0.5, 0.5, 0.5, 0.5, 0.5 , 0.5;
 
-    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 10 )  {
+//        while(fabs(deltaP(0)-0.5)>0 && fabs(deltaP(1)-0.5)>0 && fabs(deltaP(2) - 0.5)>0 && fabs(deltaP(3)-0.2)>0 && fabs(deltaP(4) -0.2)>0 && fabs(deltaP(5) - 0.3)>0 && n_iterations < 10 )  {
+            while (n_iterations < 10 ){
+
+            score = 0;
             grad.setZero();
             hessian.setZero();
             pt_gradient_.setZero();
             pt_gradient_.block<3, 3>(0, 0).setIdentity();
             pt_hessian_.setZero();
-            score = 0;
+
 
             Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y,
                                                  currentPose.position.z);
@@ -289,7 +290,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             std::cout << "#################Iteration Number########### " << n_iterations << "\n";
 
             n_iterations += 1;
-            std::cout << "computing score" << std::endl;
+//            std::cout << "computing score" << std::endl;
             bool compute_gradient = false;
             for (size_t i = 0; i < transCloud->size(); i++) {
                 // Find the cell in which the point is lying
@@ -310,24 +311,22 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     Eigen::Vector3d Xpt(x, y, z); //Store the point
                     Eigen::Vector3d diff = Xpt - mean;
 
-//            std::cout << covar << "\n";
-//            std::cout << "score:: " << score << "\n";
                     // Computing PDFs only for those voxels with more than 5 points
                     if (vgrid.grid[idx][idy][idz].numPoints > 6) {
                         compute_gradient = true;
                         double a = diff.transpose() * covarinv * diff;
-                        std::cout << "Covariance : " << covar;
-                        std::cout << "Covariance inverse     : " << covarinv;
-                        std::cout << "a" << a << "\n";
+//                        std::cout << "Covariance : " << covar << "\n";
+//                        std::cout << "Covariance inverse     : " << covarinv << "\n";
+//                        std::cout << "a" << a << "\n";
                         score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
-                        std::cout << "score: " << score << "\n";
+//                        std::cout << "score: " << score << "\n";
                     }
                 }
             }
 
             // Compute gradient
             if (compute_gradient == true) {
-                std::cout << "Computing gradient" << std::endl;
+//                std::cout << "Computing gradient" << std::endl;
                 for (size_t i = 0; i < transCloud->size(); i++) {
 
                     x = transCloud->points.at(i).x;
@@ -337,6 +336,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     int idx = floor((x - x_min) / resolution_);
                     int idy = floor((y - y_min) / resolution_);
                     int idz = floor((z - z_min) / resolution_);
+                    // check if the
                     if ((idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) &&
                         (idz >= 0) && (idz < vgrid.voxel_numz)) {
                         Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
@@ -377,16 +377,15 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 
                 }
 
-
-                std::cout << "gradient : " << grad << std::endl;
-                std::cout << "Hessian : " << hessian << std::endl;
+//                std::cout << "gradient : " << grad << std::endl;
+//                std::cout << "Hessian : " << hessian << std::endl;
 
                 // Solve for detlaP = - Hinv*g
                 deltaP = -hessian.inverse() * grad;
 
-                std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
+//                std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
 
-                std::cout << "deltaP" << deltaP << std::endl;
+//                std::cout << "deltaP" << deltaP << std::endl;
 
                 CurrentPoseRPY = CurrentPoseRPY + deltaP;
 
@@ -398,10 +397,10 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 currentPose.orientation.x = q.x();
                 currentPose.orientation.y = q.y();
                 currentPose.orientation.z = q.z();
-                std::cout << "current Pose :" << std::endl;
-                std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
-                std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
-                          << deltaP(5) << "\n";
+//                std::cout << "current Pose :" << std::endl;
+//                std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
+//                std::cout <<  "Delta" << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
+//                          << deltaP(5) << "\n";
             }
 
         }
@@ -417,12 +416,43 @@ void NDT::computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const pcl::Poi
 
     // Computing  Eq 6.18
 
-    cx = cos(p[3]);
-    sx = sin(p[3]);
-    cy = cos(p[4]);
-    sy = sin(p[4]);
-    cz = cos(p[5]);
-    sz = sin(p[5]);
+    if (fabs (p (3)) < 10e-5)  //p(3) = 0;
+    {
+        cx = 1.0;
+        sx = 0.0;
+    }
+    else
+    {
+        cx = cos (p (3));
+        sx = sin (p (3));
+    }
+    if (fabs (p (4)) < 10e-5) //p(4) = 0;
+    {
+        cy = 1.0;
+        sy = 0.0;
+    }
+    else
+    {
+        cy = cos (p (4));
+        sy = sin (p (4));
+    }
+
+    if (fabs (p (5)) < 10e-5) //p(5) = 0;
+    {
+        cz = 1.0;
+        sz = 0.0;
+    }
+    else
+    {
+        cz = cos (p (5));
+        sz = sin (p (5));
+    }
+//    cx = cos(p[3]);
+//    sx = sin(p[3]);
+//    cy = cos(p[4]);
+//    sy = sin(p[4]);
+//    cz = cos(p[5]);
+//    sz = sin(p[5]);
 
     Eigen::Vector3d j_a, j_b, j_c, j_d, j_e, j_f, j_g, j_h;
 
@@ -467,12 +497,46 @@ void NDT::computeHessian(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointX
 
     double cx, cy, cz, sx, sy, sz;
 
-    cx = cos(p[3]);
-    sx = sin(p[3]);
-    cy = cos(p[4]);
-    sy = sin(p[4]);
-    cz = cos(p[5]);
-    sz = sin(p[5]);
+    // simplification for near angles near 0:
+
+    if (fabs (p (3)) < 10e-5)  //p(3) = 0;
+    {
+        cx = 1.0;
+        sx = 0.0;
+    }
+    else
+    {
+        cx = cos (p (3));
+        sx = sin (p (3));
+    }
+    if (fabs (p (4)) < 10e-5) //p(4) = 0;
+    {
+        cy = 1.0;
+        sy = 0.0;
+    }
+    else
+    {
+        cy = cos (p (4));
+        sy = sin (p (4));
+    }
+
+    if (fabs (p (5)) < 10e-5) //p(5) = 0;
+    {
+        cz = 1.0;
+        sz = 0.0;
+    }
+    else
+    {
+        cz = cos (p (5));
+        sz = sin (p (5));
+    }
+
+//    cx = cos(p[3]);
+//    sx = sin(p[3]);
+//    cy = cos(p[4]);
+//    sy = sin(p[4]);
+//    cz = cos(p[5]);
+//    sz = sin(p[5]);
 
     h_a2_ << (-cx * sz - sx * sy * cz), (-cx * cz + sx * sy * sz), sx * cy;
     h_a3_ << (-sx * sz + cx * sy * cz), (-cx * sy * sz - sx * cz), (-cx * cy);
