@@ -22,11 +22,11 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
 
     gaussian_d2 = -2*log((-log(gaussian_c1*exp(-0.5)+gaussian_c2)-gaussian_d3)/gaussian_d1);
 
-    std::cout << "c1 " << gaussian_c1 <<  "\n" ;
-    std::cout << "c2 " << gaussian_c2 <<  "\n" ;
-    std::cout << "d1 " << gaussian_d1 <<  "\n" ;
-    std::cout << "d2 " << gaussian_d2 <<  "\n" ;
-    std::cout << "d3 " << gaussian_d3 <<  "\n" ;
+//    std::cout << "c1 " << gaussian_c1 <<  "\n" ;
+//    std::cout << "c2 " << gaussian_c2 <<  "\n" ;
+//    std::cout << "d1 " << gaussian_d1 <<  "\n" ;
+//    std::cout << "d2 " << gaussian_d2 <<  "\n" ;
+//    std::cout << "d3 " << gaussian_d3 <<  "\n" ;
 
     pcl::PCDReader reader;
 
@@ -135,6 +135,11 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
         }
     }
 
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigenslover;
+    Eigen::Matrix3d eigen_val;
+    Eigen::Matrix3d eigenvecs;
+    Eigen::Matrix3d icov;
+    double min_covar_eigenvalue = 0.01;
     // Covariance
     for (size_t i =  0; i< cloud.size(); i++) {
 
@@ -149,8 +154,12 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
 
         Eigen::Vector3d point(x, y, z);
         Eigen::Vector3d v;
+
+
         v = point - vgrid.grid[idx][idy][idz].mean;
         vgrid.grid[idx][idy][idz].covariance += v*v.transpose();
+
+
     }
 
     // Computing covariance in each voxel
@@ -158,9 +167,35 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid)
         for (size_t j = 0; j <  voxel_num_y; j++) {
             for (size_t k = 0; k <voxel_num_z; k++) {
 //                std::cout << vgrid.grid[i][j][k].numPoints << "\n";
-                if (vgrid.grid[i][j][k].numPoints > 3)
+                if (vgrid.grid[i][j][k].numPoints > 6)
 
                 vgrid.grid[i][j][k].covariance /= (vgrid.grid[i][j][k].numPoints-1);
+
+                //Normalizing covariance to remove singularities
+                eigenslover.compute(vgrid.grid[i][j][k].covariance);
+                eigen_val = eigenslover.eigenvalues().asDiagonal();
+                eigenvecs = eigenslover.eigenvectors();
+                if (eigen_val(0,0)<0 || eigen_val(1,1) <0 || eigen_val (2,2) <=0)
+                {
+                    vgrid.grid[i][j][k].numPoints =-1;
+                    continue;
+                }
+                if (eigen_val(0,0) < min_covar_eigenvalue)
+                {
+                    eigen_val(0,0) = min_covar_eigenvalue;
+                    if (eigen_val(1,1) < min_covar_eigenvalue)
+                    {
+                        eigen_val(1,1)  = min_covar_eigenvalue;
+                    }
+                    vgrid.grid[i][j][k].covariance = eigenvecs*eigen_val*eigenvecs.inverse();
+                    icov = vgrid.grid[i][j][k].covariance.inverse();
+                    if (icov.maxCoeff() == std::numeric_limits<float>::infinity()
+                            || icov.minCoeff() == -std::numeric_limits<float>::infinity())
+                    {
+                        vgrid.grid[i][j][k].numPoints =-1;
+                    }
+                }
+
             }
         }
     }
@@ -201,8 +236,6 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
     scanCloud = *cloud;
     pcl::fromROSMsg(*input, scanCloud);
     ROS_INFO("Got point cloud with %ld points", scanCloud.size());
-    ROS_INFO("Got point cloud with %f X", scanCloud.at(1).x);
-    ROS_INFO("Got point cloud with %f y", scanCloud.at(1).y);
 
     // store voxel grid
     VoxelGrid vgrid;
@@ -220,13 +253,14 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
     Eigen::Matrix<double, 6, 6> hessian;
     Eigen::Matrix<double, 6, 1> deltaP;
 
+    std::cout<< "transforming Pointcloud" << std::endl;
     pcl::transformPointCloud (scanCloud, *transCloud, position, rotation);
-
+    std::cout << "transforming Pointcloud done...." << "\n";
     deltaP << 1,1,1,1,1,1;
     grad.setZero();
     hessian.setZero();
+
     // find the cell in which the point is lying
-    //
     int n_iterations = 0;
 
     Eigen::Matrix<double, 3, 6> pt_gradient_;
@@ -235,17 +269,18 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
     pt_gradient_.setZero();
     pt_hessian_.setZero();
     score = 0;
-    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
-        std::cout << "inside while : " << n_iterations << "\n";
-//        while (n_iterations==0)
-//    {
+
+//    while(deltaP(0) > 0.5 && deltaP(1) > 0.5 && deltaP(2) > 0.5 && deltaP(3) > 0.2 && deltaP(4) > 0.2 && deltaP(5) > 0.3 && n_iterations < 100 )  {
+    while(n_iterations < 3){
+        std::cout << "#################Iteration Number########### " << n_iterations << "\n";
+
         n_iterations += 1;
+        std::cout << "computing score" << std::endl;
         for (size_t i = 0; i < transCloud->size(); i++) {
             // Find the cell in which the point is lying
             x = transCloud->points.at(i).x;
             y = transCloud->points.at(i).y;
             z = transCloud->points.at(i).z;
-
             int idx = floor((x - x_min) / resolution_);
             int idy = floor((y - y_min) / resolution_);
             int idz = floor((z - z_min) / resolution_);
@@ -259,17 +294,19 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 //            std::cout << covar << "\n";
 //            std::cout << "score:: " << score << "\n";
             // Computing PDFs only for those voxels with more than 5 points
-            if (vgrid.grid[idx][idy][idz].numPoints> 5) {
+            if (vgrid.grid[idx][idy][idz].numPoints> 6) {
                 double a = diff.transpose() * covarinv * diff;
-//                std::cout << "a" << a << "\n";
+                std::cout << "Covariance inverse     : " << covarinv;
+                std::cout << "a" << a << "\n";
                 score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
+                std::cout << "score: " << score << "\n";
             }
 //            std::cout << "score:: " << score << "\n";
         }
 
         // Compute gradient
 
-
+        std::cout << "Computing gradient" << std::endl;
         for (size_t i = 0; i < transCloud->size(); i++) {
 
             x = transCloud->points.at(i).x;
@@ -292,27 +329,31 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             computeHessian(CurrentPoseRPY, transCloud->points.at(i), pt_hessian_);
 
             // update gradient
-            for (size_t i = 0; i < 6; i++) {
-                double a = X.transpose() * covarinv * X;
-                double b = X.transpose() * covarinv * pt_gradient_.col(i);
-                grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
-
-                // update hessian
-                for (size_t j = 0; j < 6; j++) {
-                    double c = X.transpose() * covarinv * pt_gradient_.col(j);
-                    double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
-                    double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
-                    double f = b * c;
-                    hessian(i, j) +=
-                            gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d + e;
+            if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                for (size_t i = 0; i < 6; i++) {
+                    double a = X.transpose() * covarinv * X;
+//                    std::cout << "a: " << a << std::endl;
+                    double b = X.transpose() * covarinv * pt_gradient_.col(i);
+//                    std::cout << "b: " << b << std::endl;
+                    grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
+//                    std::cout << "grad (i): " << grad(i) << std::endl;
+                    // update hessian
+                    for (size_t j = 0; j < 6; j++) {
+                        double c = X.transpose() * covarinv * pt_gradient_.col(j);
+                        double d = X.transpose() * covarinv * pt_hessian_.block<3, 1>(3 * i, j);
+                        double e = pt_gradient_.col(j).transpose() * covarinv * pt_gradient_.col(i);
+                        double f = b * c;
+                        hessian(i, j) +=
+                                gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) * (-gaussian_d2 * f) + d + e;
+                    }
                 }
             }
 
         }
 
+        std::cout << "gradient : " << grad << std::endl;
         std::cout << "Hessian : " << hessian << std::endl;
 
-        std::cout << "gradient : " << grad << std::endl;
         // Solve for detlaP = - Hinv*g
         deltaP = -hessian.inverse() * grad;
 
@@ -333,7 +374,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         std::cout << "current Pose :" << std::endl;
         std::cout << CurrentPoseRPY(0) << " " << CurrentPoseRPY(1) << " " << CurrentPoseRPY(2) << std::endl;
         std::cout << deltaP(0) << " " << deltaP(1) << " " << deltaP(2) << " " << deltaP(3) << " " << deltaP(4)
-                  << deltaP(5);
+                  << deltaP(5) << "\n";
     }
 
 }
