@@ -6,6 +6,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <geometry_msgs/PoseStamped.h>
 
 // pcl related inputs
 #include <pcl_conversions/pcl_conversions.h>
@@ -15,6 +16,7 @@
 #include <pcl/common/transforms.h>
 
 
+// Voxel datastructure
 class Voxel
 {
 public:
@@ -29,6 +31,7 @@ public:
     int numPoints;
 };
 
+// class VoxelGrid which stores the voxels as a grid
 class VoxelGrid
 {public:
     typedef std::vector<std::vector<std::vector<Voxel> > > Grid;
@@ -63,6 +66,7 @@ class VoxelGrid
 };
 
 
+// Class for NDT transform
 class NDT
 {
 
@@ -85,11 +89,9 @@ public: void scanCallback (const sensor_msgs::PointCloud2ConstPtr& input);
 public: void computeTransform(const Cloud::Ptr &map_cloud, const Cloud::Ptr &scan_cloud, const geometry_msgs::Pose::ConstPtr &init_pose);
 
 public: void voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& vgrid);
-
+public: ros::Publisher mapPub;
 public: bool initPose_set;
-private: ros::Publisher marker_pub;
 private: ros::Publisher posePub;
-
 private: ros::Publisher transformCloudPub;
 private: ros::Subscriber mapSub;
 private: ros::Subscriber scanSub;
@@ -100,29 +102,23 @@ public: Cloud scanCloud;
 public: std::string mapfile;
 public: std::string mapfileDefault;
 public: geometry_msgs::Pose initPose;
-public: geometry_msgs::Pose currentPose;
+public: geometry_msgs::PoseStamped currentPose;
 public: Eigen::Matrix<double, 6, 1> CurrentPoseRPY;
 public: void invertMatrix(Eigen::Matrix3d &mat, Eigen::Matrix3d &invmat);
+
 private:
     double score;
     double  x_min, x_max, y_min, y_max, z_min, z_max;
     double gaussian_d1, gaussian_d2;
-
     double outlier_ratio_, resolution_;
     int max_iterations_;
     double transformation_eps;
-public :   VoxelGrid vgrid;
-//    Eigen::Matrix<double, 3, 6> pt_gradient_;
-//
-//    Eigen::Matrix<double, 18, 6> pt_hessian_;
 
-//    void computeHessian(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 18, 6>& pt_hessian_);
+public :   VoxelGrid vgrid;
     void computeHessian(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d & X, Eigen::Matrix<double, 18, 6>& pt_hessian_);
 
-//    void computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 3, 6>& pt_gradient_);
     void computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d & X, Eigen::Matrix<double, 3, 6>& pt_gradient_);
 
-    void loadMap(std::string map_file);
 };
 
 

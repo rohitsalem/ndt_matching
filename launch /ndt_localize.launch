@@ -2,4 +2,7 @@
   <rosparam command="load" file="$(find ndt)/params/params.yaml" />
   <node pkg="ndt" type="ndt" name="ndt_node" output="screen">
   </node>
+  <arg name ="rviz" default="true"/>
+  <arg name ="rviz_file" default="$(find ndt)/config/config.rviz"/>
+  <node pkg ="rviz" type="rviz" name="rviz" output="screen" args= "-d $(arg rviz_file)" if="$(arg rviz)"/>
 </launch>

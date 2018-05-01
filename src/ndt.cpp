@@ -8,11 +8,11 @@
 NDT::NDT(ros::NodeHandle &n): nh(n)
 {
     scanSub = nh.subscribe("/filtered_points", 10, &NDT::scanCallback, this);
-    initialPoseSub = nh.subscribe("/initialpose", 10, &NDT::initialPoseCallback, this);
-
+    initialPoseSub = nh.subscribe("/initialpose", 20, &NDT::initialPoseCallback, this);
+    mapPub = nh.advertise<sensor_msgs::PointCloud2>("/map_pcd", 1, true);
     transformCloudPub = nh.advertise<sensor_msgs::PointCloud2>("/my_pointcloud", 10);
     // Current pose publisher
-    posePub = nh.advertise<geometry_msgs::PoseStamped>("/mypose", 100);
+    posePub = nh.advertise<geometry_msgs::PoseStamped>("/estimated_pose", 100);
 
     nh.getParam("outlier_ratio", outlier_ratio_);
     nh.getParam("resolution", resolution_);
@@ -32,12 +32,18 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     reader.read(mapfile,mapCloud);
     ROS_INFO("Loaded Map cloud, Got point cloud with %ld points", mapCloud.size());
 
+    // Publsihing map on /map_pcd for viewing in rviz
+    mapCloud.header.frame_id = "/map";
+    sensor_msgs::PointCloud2 msg;
+    pcl::toROSMsg(mapCloud,msg);
+    msg.header.frame_id = "/map";
+    mapPub.publish(msg);
+
     // Create voxel grid
     NDT::voxelize_find_boundaries(mapCloud, vgrid);
 
     // Flag which is set to false until the initialpose is set
     initPose_set = false;
-    marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
 
 }
 
@@ -46,7 +52,12 @@ NDT::~NDT()
 
 }
 
-
+/// brief: function to create voxel grids:
+///         Given an input cloud, the boundaries in x , y and z are find out
+///         Voxels are  created by diving the limits by resolution
+///         All points are assigned to their respective voxels
+///         Mean and covariance are calculated for each voxel
+///         Calculating covariance some specical considerations are made to avoid singularitites
 void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& v_grid)
 {
 
@@ -123,20 +134,11 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& v_grid)
         v_grid.grid[idx][idy][idz].numPoints += 1;
     }
 
-    std::cout << "Voxels on x axis :" << vgrid.voxel_numx << "\n" ;
-    std::cout << "Voxels on y axis :" << vgrid.voxel_numy << "\n" ;
-    std::cout << "Voxels on z axis :" << vgrid.voxel_numz << "\n" ;
-    std::cout << "Total Voxels : " << vgrid.voxel_numx*vgrid.voxel_numy*vgrid.voxel_numz << "\n" ;
-
     // computing mean in each voxel
     for (size_t i=0; i<= voxel_num_x; i++) {
-//        std::cout << "x mean" << "\n";
         for(size_t j =0; j<= voxel_num_y; j++ ) {
             for (size_t k = 0; k<= voxel_num_z; k++) {
                 if (v_grid.grid[i][j][k].numPoints != 0)
-//                    std::cout << " inside calculating mean for each voxel :"  <<std::endl;
-//                    std::cout << "number of points: " << v_grid.grid[i][j][k].numPoints << "\n";
-
                 v_grid.grid[i][j][k].mean /= v_grid.grid[i][j][k].numPoints;
             }
         }
@@ -172,7 +174,6 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& v_grid)
     for (size_t i=0; i< voxel_num_x; i++) {
         for (size_t j = 0; j <  voxel_num_y; j++) {
             for (size_t k = 0; k <voxel_num_z; k++) {
-//                std::cout << v_grid.grid[i][j][k].numPoints << "\n";
                 if (v_grid.grid[i][j][k].numPoints > 6)
                 {
                  voxels_with_covariance+=1;
@@ -208,17 +209,20 @@ void NDT::voxelize_find_boundaries(const Cloud& cloud, VoxelGrid& v_grid)
             }
         }
     }
-//    std::cout << "Voxels with covariance :" << voxels_with_covariance << "\n";
 }
 
 
+/// Brief : callback to subscribe initial pose and store it in the current pose :
+///         Here current pose is also computed to get RPY values which are useful in further calculations
 void NDT::initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& input)
-{   currentPose.position.x = input->pose.pose.position.x;
-    currentPose.position.y = input->pose.pose.position.y;
-    currentPose.position.z = input->pose.pose.position.z;
-    currentPose.orientation.x = input->pose.pose.orientation.x;
-    currentPose.orientation.y = input->pose.pose.orientation.y;
-    currentPose.orientation.z = input->pose.pose.orientation.z;
+{   currentPose.pose.position.x = input->pose.pose.position.x;
+    currentPose.pose.position.y = input->pose.pose.position.y;
+    currentPose.pose.position.z = input->pose.pose.position.z;
+    currentPose.pose.orientation.x = input->pose.pose.orientation.x;
+    currentPose.pose.orientation.y = input->pose.pose.orientation.y;
+    currentPose.pose.orientation.z = input->pose.pose.orientation.z;
+    currentPose.pose.orientation.w = input->pose.pose.orientation.w;
+    currentPose.header.frame_id = "/map";
     double  roll, pitch, yaw;
     tf::Quaternion q(
             input->pose.pose.orientation.x,
@@ -231,24 +235,15 @@ void NDT::initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::Co
     std::cout << "initial Pose is set " << "\n";
 }
 
-void NDT::mapCallback (const sensor_msgs::PointCloud2ConstPtr& input)
-{
-    Cloud::Ptr cloud(new Cloud());
-    mapCloud = *cloud;
-    pcl::fromROSMsg(*input, mapCloud);
-//    ROS_INFO("Got point cloud with %ld points", mapCloud.size());
-}
-
-
+/// Brief: callback function where the poincloud scan is being match with base or map scan
 void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 {
     // Run only if the initial pose is set
     if (initPose_set == true) {
-        int start_s1=clock();
+
         Cloud::Ptr cloud(new Cloud());
         scanCloud = *cloud;
         pcl::fromROSMsg(*input, scanCloud);
-//        ROS_INFO("Got scan point cloud with %ld points", scanCloud.size());
 
         double x, y, z;
 
@@ -280,22 +275,20 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             pt_gradient_.block<3, 3>(0, 0).setIdentity();
             pt_hessian_.setZero();
 
-            Eigen::Matrix<double, 3, 1> position(currentPose.position.x, currentPose.position.y,
-                                                 currentPose.position.z);
-            Eigen::Quaternion<double> rotation(currentPose.orientation.w, currentPose.orientation.x,
-                                               currentPose.orientation.y, currentPose.orientation.z);
+            Eigen::Matrix<double, 3, 1> position(currentPose.pose.position.x, currentPose.pose.position.y,
+                                                 currentPose.pose.position.z);
+            Eigen::Quaternion<double> rotation(currentPose.pose.orientation.w, currentPose.pose.orientation.x,
+                                               currentPose.pose.orientation.y, currentPose.pose.orientation.z);
 
             pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
 
             transCloud->header.frame_id = "/map";
-//            transCloud->height = transCloud->width = 1;
             sensor_msgs::PointCloud2 msg;
             pcl::toROSMsg(*transCloud,msg);
             msg.header.frame_id = "/map";
             transformCloudPub.publish(msg);
-            std::cout << "#################Iteration Number########### " << n_iterations << "\n";
+//            std::cout << "#################Iteration Number########### " << n_iterations << "\n";
 
-//            std::cout << "computing score" << std::endl;
             bool compute_gradient = false;
 
             for (size_t i = 0; i < transCloud->size(); i++) {
@@ -307,26 +300,22 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 int idy = floor((y - y_min) / resolution_);
                 int idz = floor((z - z_min) / resolution_);
 
+                // Checking if the transofrmed point is within the limits of the voxel grid we have for map
                 if ((idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) && (idz >= 0) &&
                     (idz < vgrid.voxel_numz)) {
 
-//                    std::cout << "inside computing voxel loop" << "\n";
-//                    std:: cout << "idx: " << idx << " " << "idy: " << idy << " " << "idz: "<< idz << "\n";
-//                    std:: cout << "maxx: " << vgrid.voxel_numx << " " << "maxy:" << vgrid.voxel_numy  << " " << "maxz: " <<vgrid.voxel_numz << "\n";
                     Eigen::Vector3d mean = vgrid.grid[idx][idy][idz].mean;
                     Eigen::Matrix3d covar = vgrid.grid[idx][idy][idz].covariance;
                     Eigen::Matrix3d covarinv = covar.inverse();
                     Eigen::Vector3d Xpt(x, y, z); //Store the point
                     Eigen::Vector3d X = Xpt - mean;
 
-                    // Computing PDFs only for those voxels with more than 5 points
+                    // Computing PDFs only for those voxels with more than 4 points
                     if (vgrid.grid[idx][idy][idz].numPoints > 4) {
-//                        std::cout << "Computing PDFs only for voxels with" << std::endl;
                         compute_gradient = true;
                         double a = X.transpose() * covarinv * X;
 //                        std::cout << "Covariance : " << "\n << covar << "\n";
 //                        std::cout << "Covariance inverse     : " << covarinv << "\n";
-//                        std::cout << "a" << a << "\n";
                         score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
 //                        std::cout << "score: " << score << "\n";
 
@@ -338,11 +327,8 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                         if (vgrid.grid[idx][idy][idz].numPoints > 6) {
                             for (size_t i = 0; i < 6; i++) {
                                 double a = X.transpose() * covarinv * X;
-//                    std::cout << "a: " << a << std::endl;
                                 double b = X.transpose() * covarinv * pt_gradient_.col(i);
-//                    std::cout << "b: " << b << std::endl;
                                 grad(i) += gaussian_d1 * gaussian_d2 * b * exp(-(a * gaussian_d2 / 2));
-//                    std::cout << "grad (i): " << grad(i) << std::endl;
                                 // update hessian
                                 for (size_t j = 0; j < 6; j++) {
                                     double c = X.transpose() * covarinv * pt_gradient_.col(j);
@@ -351,10 +337,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                                     double f = b * c;
                                     hessian(i, j) +=
                                             gaussian_d1 * gaussian_d2 * exp((-gaussian_d2 / 2) * a) *
-                                            ((-gaussian_d2 * f) + d +
-                                            e);
-
-//                        std::cout << "Hess(i,j)" << hessian(i,j) << std::endl;
+                                            ((-gaussian_d2 * f) + d + e);
 
                                 }
                             }
@@ -362,11 +345,9 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     }
                 }
             }
-                int stop_s=clock();
-            std:: cout << " time : " <<  (stop_s-start_s)/double(CLOCKS_PER_SEC) << "\n";
+
             // updates only if any of the transformed points align with the mapcloud voxels
                 if (compute_gradient == true) {
-//
 //                    std::cout << "gradient : " << grad << std::endl;
 //                    std::cout << "Hessian : " << hessian << std::endl;
 
@@ -375,23 +356,26 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     deltaP = -hessian.inverse() * grad;
 
 //                    std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
-//
 //                    std::cout << "deltaP" << deltaP << std::endl;
 
                     CurrentPoseRPY = CurrentPoseRPY + deltaP;
 
                     tf::Quaternion q = tf::createQuaternionFromRPY(CurrentPoseRPY(3), CurrentPoseRPY(4),
                                                                    CurrentPoseRPY(5));
-                    currentPose.position.x = CurrentPoseRPY(0);
-                    currentPose.position.y = CurrentPoseRPY(1);
-                    currentPose.position.z = CurrentPoseRPY(2);
-                    currentPose.orientation.w = q.w();
-                    currentPose.orientation.x = q.x();
-                    currentPose.orientation.y = q.y();
-                    currentPose.orientation.z = q.z();
+                    currentPose.pose.position.x = CurrentPoseRPY(0);
+                    currentPose.pose.position.y = CurrentPoseRPY(1);
+                    currentPose.pose.position.z = CurrentPoseRPY(2);
+                    currentPose.pose.orientation.w = q.w();
+                    currentPose.pose.orientation.x = q.x();
+                    currentPose.pose.orientation.y = q.y();
+                    currentPose.pose.orientation.z = q.z();
 
+                    // Publishing the current pose on
+//                    geometry_msgs::PoseStamped ps;
+//                    ps.header.frame_id = "/map";
+//                    ps.pose = currentPose;
+                    posePub.publish(currentPose);
                     if (n_iterations > max_iterations_ || deltaP.norm() < transformation_eps){
-//                        std::cout << "#############################################################" << "\n";
                         converged = true;
                     }
                 }
@@ -402,36 +386,18 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 }
             }
         }
-        geometry_msgs::PoseStamped ps;
-        ps.header.frame_id = "/map";
-        ps.pose = currentPose;
-        posePub.publish(ps);
+        // Publishing the current pose on
+//        geometry_msgs::PoseStamped ps;
+//        ps.header.frame_id = "/map";
+//        ps.pose = currentPose;
+//        posePub.publish(ps);
+//          posePub.publish(currentPose);
 
-        visualization_msgs::Marker marker;
-        marker.header.frame_id = "/map";
-        marker.header.stamp  = ros::Time::now();
-        marker.id = 0;
-        marker.type = visualization_msgs::Marker::ARROW;
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.pose.position = currentPose.position;
-        marker.pose.orientation = currentPose.orientation;
-        marker.lifetime = ros::Duration();
-        marker.scale.x = 1.0;
-         marker.scale.y = 5.0;
-         marker.scale.z = 1.0;
-
-
-         // Set the color -- be sure to set alpha to something non-zero!
-         marker.color.r = 0.0f;
-         marker.color.g = 1.0f;
-         marker.color.b = 0.0f;
-         marker.color.a = 1.0;
-         marker_pub.publish(marker);
-    }
+}
 
 
 
-// input is a vector with [trans, roll, pitch , yaw]
+/// Brief: computes a point gradient which is used in derivate uodate step
 void NDT::computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d &X ,Eigen::Matrix<double, 3, 6>& pt_gradient_)
 {
     double cx, cy, cz, sx, sy, sz;
@@ -482,8 +448,6 @@ void NDT::computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const Eigen::V
     j_g << cx * cz - sx * sy * sz, -cx * sz - sx * sy * cz, 0;
     j_h << sx * cz + cx * sy * sz, cx * sy * cz - sx * sz, 0;
 
-//    // To store the point from the point cloud
-//    Eigen::Vector3d X(pt.x, pt.y, pt.z);
 
     // Computing gradient for a point
     pt_gradient_.setZero();
@@ -501,6 +465,7 @@ void NDT::computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const Eigen::V
 
 }
 
+/// Brief: this method computes the point hessain which is used in the hessain update step
 void NDT::computeHessian(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d & X,  Eigen::Matrix<double, 18, 6>& pt_hessian_)
 {
 
@@ -568,8 +533,6 @@ void NDT::computeHessian(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vect
     h_f2_ << (-cx * sz - sx * sy * cz), (-cx * cz + sx * sy * sz), 0;
     h_f3_ << (-sx * sz + cx * sy * cz), (-cx * sy * sz - sx * cz), 0;
 
-//    // To store the point from the point cloud
-//    Eigen::Vector3d X(pt.x, pt.y, pt.z);
 
     Eigen::Vector3d a, b, c, d, e, f;
     a << 0, X.dot(h_a2_), X.dot(h_a3_);
@@ -601,11 +564,6 @@ int main (int argc, char **argv)
     ros::NodeHandle nh;
     NDT obj(nh);
 
-    std::string mapfile = "/home/rsalem/apex/workspace/src/ndt/data/map.pcd";
-    obj.mapfile = mapfile;
-    //    pcl::PCDReader reader;
-    //    reader.read
-    //    nh.param<std::string>("map_file", mapfile, "map.pcd");
     ros::Rate rate(10);
     while(ros::ok()){
         ros::spinOnce();
