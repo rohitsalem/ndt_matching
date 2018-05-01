@@ -1,5 +1,5 @@
 <launch>
+  <rosparam command="load" file="$(find ndt)/params/params.yaml" />
   <node pkg="ndt" type="ndt" name="ndt_node" output="screen">
-    <rosparam name="map_file" type="str" value="$(find ndt)/data/map.pcd"/>
   </node>
 </launch>

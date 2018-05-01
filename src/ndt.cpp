@@ -6,18 +6,19 @@
 
 NDT::NDT(ros::NodeHandle &n): nh(n)
 {
-    scanSub = nh.subscribe("/filtered_points", 10, &NDT::scanCallback, this);
-//    mapSub = nh.subscribe("/cloud_pcd", 10, &NDT::mapCallback, this);
+    scanSub = nh.subscribe("/filtered_points", 3, &NDT::scanCallback, this);
     initialPoseSub = nh.subscribe("/initialpose", 10, &NDT::initialPoseCallback, this);
 
     // Current pose publisher
     posePub = nh.advertise<geometry_msgs::Pose>("/ndt/pose", 100);
-    max_iterations_ = 10;
-    transformation_eps = 0.1;
+
+    nh.getParam("outlier_ratio", outlier_ratio_);
+    nh.getParam("resolution", resolution_);
+    nh.getParam("max_iterations", max_iterations_);
+    nh.getParam("transformation_eps", transformation_eps);
+
     // Initializing values for the gaussians
     double  gaussian_c1, gaussian_c2, gaussian_d3;
-    outlier_ratio_ = 0.55;
-    resolution_ = 5.0;
     gaussian_c1 = 10*(1-outlier_ratio_);
     gaussian_c2 = outlier_ratio_/pow(resolution_,3);
     gaussian_d3 = -log (gaussian_c2);
@@ -25,14 +26,16 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
     gaussian_d2 = -2*log((-log(gaussian_c1*exp(-0.5)+gaussian_c2)-gaussian_d3)/gaussian_d1);
 
     pcl::PCDReader reader;
-
-    reader.read("/home/rsalem/apex/workspace/src/ndt/data/map.pcd",mapCloud);
+    nh.getParam("map_file", mapfile);
+    reader.read(mapfile,mapCloud);
     ROS_INFO("Loaded Map cloud, Got point cloud with %ld points", mapCloud.size());
-    // store voxel grid
-//    VoxelGrid vgrid;
+
+    // Create voxel grid
     NDT::voxelize_find_boundaries(mapCloud, vgrid);
 
+    // Flag which is set to false until the initialpose is set
     initPose_set = false;
+
 }
 
 NDT::~NDT()
@@ -280,7 +283,6 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 
             pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
             std::cout << "#################Iteration Number########### " << n_iterations << "\n";
-
 
 //            std::cout << "computing score" << std::endl;
             bool compute_gradient = false;

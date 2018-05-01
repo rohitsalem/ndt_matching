@@ -1,0 +1,5 @@
+map_file: "/home/rsalem/apex/workspace/src/ndt/data/map.pcd"
+max_iterations: 10
+outlier_ratio: 0.55
+resolution: 10
+transformation_eps: 0.1
