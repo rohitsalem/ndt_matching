@@ -95,6 +95,7 @@ private: ros::NodeHandle nh;
 public: Cloud mapCloud;
 public: Cloud scanCloud;
 public: std::string mapfile;
+public: std::string mapfileDefault;
 public: geometry_msgs::Pose initPose;
 public: geometry_msgs::Pose currentPose;
 public: Eigen::Matrix<double, 6, 1> CurrentPoseRPY;
@@ -105,14 +106,19 @@ private:
     double gaussian_d1, gaussian_d2;
 
     double outlier_ratio_, resolution_;
+    int max_iterations_;
+    double transformation_eps;
 public :   VoxelGrid vgrid;
 //    Eigen::Matrix<double, 3, 6> pt_gradient_;
 //
 //    Eigen::Matrix<double, 18, 6> pt_hessian_;
 
-    void computeHessian(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 18, 6>& pt_hessian_);
+//    void computeHessian(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 18, 6>& pt_hessian_);
+    void computeHessian(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d & X, Eigen::Matrix<double, 18, 6>& pt_hessian_);
 
-    void computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 3, 6>& pt_gradient_);
+//    void computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const pcl::PointXYZ &pt, Eigen::Matrix<double, 3, 6>& pt_gradient_);
+    void computeDerivative(const Eigen::Matrix<double, 6, 1> &p, const Eigen::Vector3d & X, Eigen::Matrix<double, 3, 6>& pt_gradient_);
+
     void loadMap(std::string map_file);
 };
 
