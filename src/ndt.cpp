@@ -3,14 +3,16 @@
 #include <ros/ros.h>
 #include <tf/transform_datatypes.h>
 #include <pcl/io/pcd_io.h>
-
+#include <visualization_msgs/Marker.h>
+#include <ctime>
 NDT::NDT(ros::NodeHandle &n): nh(n)
 {
-    scanSub = nh.subscribe("/filtered_points", 3, &NDT::scanCallback, this);
+    scanSub = nh.subscribe("/filtered_points", 10, &NDT::scanCallback, this);
     initialPoseSub = nh.subscribe("/initialpose", 10, &NDT::initialPoseCallback, this);
 
+    transformCloudPub = nh.advertise<sensor_msgs::PointCloud2>("/my_pointcloud", 10);
     // Current pose publisher
-    posePub = nh.advertise<geometry_msgs::Pose>("/ndt/pose", 100);
+    posePub = nh.advertise<geometry_msgs::PoseStamped>("/mypose", 100);
 
     nh.getParam("outlier_ratio", outlier_ratio_);
     nh.getParam("resolution", resolution_);
@@ -35,6 +37,7 @@ NDT::NDT(ros::NodeHandle &n): nh(n)
 
     // Flag which is set to false until the initialpose is set
     initPose_set = false;
+    marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
 
 }
 
@@ -241,11 +244,11 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 {
     // Run only if the initial pose is set
     if (initPose_set == true) {
-
+        int start_s1=clock();
         Cloud::Ptr cloud(new Cloud());
         scanCloud = *cloud;
         pcl::fromROSMsg(*input, scanCloud);
-        ROS_INFO("Got scan point cloud with %ld points", scanCloud.size());
+//        ROS_INFO("Got scan point cloud with %ld points", scanCloud.size());
 
         double x, y, z;
 
@@ -265,6 +268,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
         Eigen::Matrix<double, 18, 6> pt_hessian_;
 
             bool converged = false;
+
             while (!converged )
 
             {
@@ -282,10 +286,18 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                                                currentPose.orientation.y, currentPose.orientation.z);
 
             pcl::transformPointCloud(scanCloud, *transCloud, position, rotation);
+
+            transCloud->header.frame_id = "/map";
+//            transCloud->height = transCloud->width = 1;
+            sensor_msgs::PointCloud2 msg;
+            pcl::toROSMsg(*transCloud,msg);
+            msg.header.frame_id = "/map";
+            transformCloudPub.publish(msg);
             std::cout << "#################Iteration Number########### " << n_iterations << "\n";
 
 //            std::cout << "computing score" << std::endl;
             bool compute_gradient = false;
+
             for (size_t i = 0; i < transCloud->size(); i++) {
                 // Find the cell in which the point is lying
                 x = transCloud->points.at(i).x;
@@ -308,10 +320,11 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     Eigen::Vector3d X = Xpt - mean;
 
                     // Computing PDFs only for those voxels with more than 5 points
-                    if (vgrid.grid[idx][idy][idz].numPoints > 6) {
+                    if (vgrid.grid[idx][idy][idz].numPoints > 4) {
+//                        std::cout << "Computing PDFs only for voxels with" << std::endl;
                         compute_gradient = true;
                         double a = X.transpose() * covarinv * X;
-//                        std::cout << "Covariance : " << covar << "\n";
+//                        std::cout << "Covariance : " << "\n << covar << "\n";
 //                        std::cout << "Covariance inverse     : " << covarinv << "\n";
 //                        std::cout << "a" << a << "\n";
                         score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
@@ -349,20 +362,21 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     }
                 }
             }
-
+                int stop_s=clock();
+            std:: cout << " time : " <<  (stop_s-start_s)/double(CLOCKS_PER_SEC) << "\n";
             // updates only if any of the transformed points align with the mapcloud voxels
                 if (compute_gradient == true) {
-
-                    std::cout << "gradient : " << grad << std::endl;
-                    std::cout << "Hessian : " << hessian << std::endl;
+//
+//                    std::cout << "gradient : " << grad << std::endl;
+//                    std::cout << "Hessian : " << hessian << std::endl;
 
                     // Solve for detlaP = - Hinv*g
 
                     deltaP = -hessian.inverse() * grad;
 
-                    std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
-
-                    std::cout << "deltaP" << deltaP << std::endl;
+//                    std::cout << "Hessian inverse: " << hessian.inverse() << std::endl;
+//
+//                    std::cout << "deltaP" << deltaP << std::endl;
 
                     CurrentPoseRPY = CurrentPoseRPY + deltaP;
 
@@ -377,7 +391,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     currentPose.orientation.z = q.z();
 
                     if (n_iterations > max_iterations_ || deltaP.norm() < transformation_eps){
-                        std::cout << "#############################################################" << "\n";
+//                        std::cout << "#############################################################" << "\n";
                         converged = true;
                     }
                 }
@@ -388,7 +402,31 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 }
             }
         }
-        posePub.publish(currentPose);
+        geometry_msgs::PoseStamped ps;
+        ps.header.frame_id = "/map";
+        ps.pose = currentPose;
+        posePub.publish(ps);
+
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "/map";
+        marker.header.stamp  = ros::Time::now();
+        marker.id = 0;
+        marker.type = visualization_msgs::Marker::ARROW;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position = currentPose.position;
+        marker.pose.orientation = currentPose.orientation;
+        marker.lifetime = ros::Duration();
+        marker.scale.x = 1.0;
+         marker.scale.y = 5.0;
+         marker.scale.z = 1.0;
+
+
+         // Set the color -- be sure to set alpha to something non-zero!
+         marker.color.r = 0.0f;
+         marker.color.g = 1.0f;
+         marker.color.b = 0.0f;
+         marker.color.a = 1.0;
+         marker_pub.publish(marker);
     }
 
 
