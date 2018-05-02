@@ -5,6 +5,7 @@
 #include <pcl/io/pcd_io.h>
 #include <visualization_msgs/Marker.h>
 #include <ctime>
+#include <tf/transform_listener.h>
 NDT::NDT(ros::NodeHandle &n): nh(n)
 {
     scanSub = nh.subscribe("/filtered_points", 10, &NDT::scanCallback, this);
@@ -222,7 +223,7 @@ void NDT::initialPoseCallback(const geometry_msgs::PoseWithCovarianceStamped::Co
     currentPose.pose.orientation.y = input->pose.pose.orientation.y;
     currentPose.pose.orientation.z = input->pose.pose.orientation.z;
     currentPose.pose.orientation.w = input->pose.pose.orientation.w;
-    currentPose.header.frame_id = "/map";
+    currentPose.header.frame_id = input->header.frame_id;
     double  roll, pitch, yaw;
     tf::Quaternion q(
             input->pose.pose.orientation.x,
@@ -243,7 +244,9 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
 
         Cloud::Ptr cloud(new Cloud());
         scanCloud = *cloud;
-        pcl::fromROSMsg(*input, scanCloud);
+        sensor_msgs::PointCloud2 msg = *input;
+        msg.header.frame_id = "/map";
+        pcl::fromROSMsg(msg, scanCloud);
 
         double x, y, z;
 
@@ -275,7 +278,22 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
             pt_gradient_.block<3, 3>(0, 0).setIdentity();
             pt_hessian_.setZero();
 
-            Eigen::Matrix<double, 3, 1> position(currentPose.pose.position.x, currentPose.pose.position.y,
+            tf::TransformListener listener;
+            tf::StampedTransform transform;
+
+            try {
+                listener.waitForTransform("/map", "/world",
+                                          ros::Time(0), ros::Duration(5.0));
+                listener.lookupTransform("/map", "/world", ros::Time(0), transform);
+            }
+            catch (tf::TransformException &ex) {
+                       ROS_ERROR("%s",ex.what());
+                       ros::Duration(1.0).sleep();
+                       continue;
+                     }
+//            Eigen::Matrix<double, 3, 1> position(currentPose.pose.position.x + transform.getOrigin().x() , currentPose.pose.position.y + transform.getOrigin().y(),
+//                                                 currentPose.pose.position.z+ transform.getOrigin().z());
+            Eigen::Matrix<double, 3, 1> position(currentPose.pose.position.x, currentPose.pose.position.y ,
                                                  currentPose.pose.position.z);
             Eigen::Quaternion<double> rotation(currentPose.pose.orientation.w, currentPose.pose.orientation.x,
                                                currentPose.pose.orientation.y, currentPose.pose.orientation.z);
@@ -299,6 +317,7 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                 int idx = floor((x - x_min) / resolution_);
                 int idy = floor((y - y_min) / resolution_);
                 int idz = floor((z - z_min) / resolution_);
+                std::cout << "size of the transformed pointcloud is :" << transCloud->size() << "\n";
 
                 // Checking if the transofrmed point is within the limits of the voxel grid we have for map
                 if ((idx >= 0) && (idx < vgrid.voxel_numx) && (idy >= 0) && (idy < vgrid.voxel_numy) && (idz >= 0) &&
@@ -314,8 +333,8 @@ void NDT::scanCallback (const sensor_msgs::PointCloud2ConstPtr& input)
                     if (vgrid.grid[idx][idy][idz].numPoints > 4) {
                         compute_gradient = true;
                         double a = X.transpose() * covarinv * X;
-//                        std::cout << "Covariance : " << "\n << covar << "\n";
-//                        std::cout << "Covariance inverse     : " << covarinv << "\n";
+                        std::cout << "Covariance : " << "\n" << covar << "\n";
+                        std::cout << "Covariance inverse     : " << covarinv << "\n";
                         score = score + gaussian_d1 * (-exp(-(a * gaussian_d2 / 2)));
 //                        std::cout << "score: " << score << "\n";
 
